@@ -162,7 +162,7 @@ class DDetect_AA(nn.Module):
         for i in range(self.nl):
             xreg = self.cv2[i](x[i])
             xcls = self.cv3[i](x[i])
-            xobj = self.stat_test(self.filtering[i](x[i]))
+            xobj = self.stat_test(self.filtering[i](x[i])).to(dtype=xreg.dtype)
             z.append(torch.cat((xreg, xobj, xcls), 1))
 
         if self.training:
