@@ -1,6 +1,6 @@
-train: ../AA-YOLOv7t-SAR/data/datasets/HRSID_YOLO/HRSID_train.txt
-val: ../AA-YOLOv7t-SAR/data/datasets/HRSID_YOLO/HRSID_val.txt
-test: ../AA-YOLOv7t-SAR/data/datasets/HRSID_YOLO/HRSID_test.txt
+train: ../AA_YOLO_SAR/data/datasets/HRSID_YOLO/HRSID_train.txt
+val: ../AA_YOLO_SAR/data/datasets/HRSID_YOLO/HRSID_val.txt
+test: ../AA_YOLO_SAR/data/datasets/HRSID_YOLO/HRSID_test.txt
 
 nc: 1
 names: ['ship']
