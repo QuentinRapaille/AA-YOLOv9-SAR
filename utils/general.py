@@ -26,10 +26,10 @@ import cv2
 import IPython
 import numpy as np
 import pandas as pd
-import pkg_resources as pkg
 import torch
 import torchvision
 import yaml
+from packaging.version import parse as parse_version
 
 from utils import TryExcept, emojis
 from utils.downloads import gsutil_getsize
@@ -363,7 +363,7 @@ def check_python(minimum='3.7.0'):
 
 def check_version(current='0.0.0', minimum='0.0.0', name='version ', pinned=False, hard=False, verbose=False):
     # Check version vs. required version
-    current, minimum = (pkg.parse_version(x) for x in (current, minimum))
+    current, minimum = (parse_version(x) for x in (current, minimum))
     result = (current == minimum) if pinned else (current >= minimum)  # bool
     s = f'WARNING ⚠️ {name}{minimum} is required by YOLO, but {name}{current} is currently installed'  # string
     if hard:

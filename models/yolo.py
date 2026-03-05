@@ -124,6 +124,66 @@ class DDetect(nn.Module):
             b[-1].bias.data[:m.nc] = math.log(5 / m.nc / (640 / s) ** 2)  # cls (5 objects and 80 classes per 640 image)
 
 
+class DDetect_AA(nn.Module):
+    # YOLOv9 Detect head with AA-YOLO objectness branch
+    dynamic = False
+    export = False
+    shape = None
+    anchors = torch.empty(0)
+    strides = torch.empty(0)
+
+    def __init__(self, nc=80, aa_chan=8, ch=(), inplace=True, aa_alpha=1e-3):
+        super().__init__()
+        self.nc = nc
+        self.nl = len(ch)
+        self.reg_max = 16
+        self.no = nc + self.reg_max * 4
+        self.inplace = inplace
+        self.stride = torch.zeros(self.nl)
+        self.use_aa = True
+
+        c2 = make_divisible(max((ch[0] // 4, self.reg_max * 4, 16)), 4)
+        c3 = max((ch[0], min((self.nc * 2, 128))))
+        self.cv2 = nn.ModuleList(
+            nn.Sequential(Conv(x, c2, 3), Conv(c2, c2, 3, g=4), nn.Conv2d(c2, 4 * self.reg_max, 1, groups=4))
+            for x in ch
+        )
+        self.cv3 = nn.ModuleList(
+            nn.Sequential(Conv(x, c3, 3), Conv(c3, c3, 3), nn.Conv2d(c3, self.nc, 1))
+            for x in ch
+        )
+        self.filtering = nn.ModuleList(filtering2D(x, aa_chan) for x in ch)
+        self.stat_test = anomaly_testing(alpha=aa_alpha)
+        self.dfl = DFL(self.reg_max) if self.reg_max > 1 else nn.Identity()
+
+    def forward(self, x):
+        shape = x[0].shape
+        z = []
+        for i in range(self.nl):
+            xreg = self.cv2[i](x[i])
+            xcls = self.cv3[i](x[i])
+            xobj = self.stat_test(self.filtering[i](x[i]))
+            z.append(torch.cat((xreg, xobj, xcls), 1))
+
+        if self.training:
+            return z
+        elif self.dynamic or self.shape != shape:
+            self.anchors, self.strides = (t.transpose(0, 1) for t in make_anchors(z, self.stride, 0.5))
+            self.shape = shape
+
+        cat = torch.cat([zi.view(shape[0], self.no + 1, -1) for zi in z], 2)
+        box, obj, cls = cat.split((self.reg_max * 4, 1, self.nc), 1)
+        dbox = dist2bbox(self.dfl(box), self.anchors.unsqueeze(0), xywh=True, dim=1) * self.strides
+        y = torch.cat((dbox, cls.sigmoid() * obj), 1)  # keep output API as 4 + nc
+        return y if self.export else (y, z)
+
+    def bias_init(self):
+        m = self
+        for a, b, s in zip(m.cv2, m.cv3, m.stride):
+            a[-1].bias.data[:] = 1.0
+            b[-1].bias.data[:m.nc] = math.log(5 / m.nc / (640 / s) ** 2)
+
+
 class DualDetect(nn.Module):
     # YOLO Detect head for detection models
     dynamic = False  # force grid reconstruction
@@ -569,7 +629,7 @@ class BaseModel(nn.Module):
         # Apply to(), cpu(), cuda(), half() to model tensors that are not parameters or registered buffers
         self = super()._apply(fn)
         m = self.model[-1]  # Detect()
-        if isinstance(m, (Detect, DualDetect, TripleDetect, DDetect, DualDDetect, TripleDDetect, Segment, DSegment, DualDSegment, Panoptic)):
+        if isinstance(m, (Detect, DualDetect, TripleDetect, DDetect, DDetect_AA, DualDDetect, TripleDDetect, Segment, DSegment, DualDSegment, Panoptic)):
             m.stride = fn(m.stride)
             m.anchors = fn(m.anchors)
             m.strides = fn(m.strides)
@@ -603,7 +663,7 @@ class DetectionModel(BaseModel):
 
         # Build strides, anchors
         m = self.model[-1]  # Detect()
-        if isinstance(m, (Detect, DDetect, Segment, DSegment, Panoptic)):
+        if isinstance(m, (Detect, DDetect, DDetect_AA, Segment, DSegment, Panoptic)):
             s = 256  # 2x min stride
             m.inplace = self.inplace
             forward = lambda x: self.forward(x)[0] if isinstance(m, (Segment, DSegment, Panoptic)) else self.forward(x)
@@ -756,7 +816,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
         elif m is CBFuse:
             c2 = ch[f[-1]]
         # TODO: channel, gw, gd
-        elif m in {Detect, DualDetect, TripleDetect, DDetect, DualDDetect, TripleDDetect, Segment, DSegment, DualDSegment, Panoptic}:
+        elif m in {Detect, DualDetect, TripleDetect, DDetect, DDetect_AA, DualDDetect, TripleDDetect, Segment, DSegment, DualDSegment, Panoptic}:
             args.append([ch[x] for x in f])
             # if isinstance(args[1], int):  # number of anchors
             #     args[1] = [list(range(args[1] * 2))] * len(f)

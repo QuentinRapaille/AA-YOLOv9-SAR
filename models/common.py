@@ -20,6 +20,7 @@ import torch
 import torch.nn as nn
 from IPython.display import display
 from PIL import Image
+from torch.autograd import Function
 from torch.cuda import amp
 
 from utils import TryExcept
@@ -1231,3 +1232,66 @@ class Classify(nn.Module):
         if isinstance(x, list):
             x = torch.cat(x, 1)
         return self.linear(self.drop(self.pool(self.conv(x)).flatten(1)))
+
+
+class filtering2D(nn.Module):
+    """2D filtering block before a contrario testing."""
+    def __init__(self, c1, c2):
+        super().__init__()
+        self.conv1 = nn.Conv2d(c1, c2, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm2d(c2)
+        self.act1 = nn.ReLU()
+        self.conv2 = nn.Conv2d(c2, c2, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(c2)
+        self.act2 = nn.ReLU()
+
+    def forward(self, x):
+        x = self.act1(self.bn1(self.conv1(x)))
+        x = self.act2(self.bn2(self.conv2(x)))
+        return x
+
+
+class lnGamma(Function):
+    """Stable log upper incomplete gamma for large values."""
+    @staticmethod
+    def forward(ctx, x, a=torch.tensor(1)):
+        ret = torch.log(torch.special.gammaincc(a, x))
+        mask = torch.isinf(ret) | torch.isnan(ret)
+        ret[mask] = -x[mask] + (a - 1) * torch.log(x[mask]) - torch.special.gammaln(a)
+        ctx.save_for_backward(x, a)
+        return ret
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        x, a = ctx.saved_tensors
+        delta = -x ** (a - 1) * torch.exp(-x) / torch.special.gammaincc(a, x)
+        mask = torch.isinf(delta) | torch.isnan(delta)
+        delta[mask] = (a - 1) / x[mask] - torch.tensor(1, device=x.device)
+        return grad_output * delta, None
+
+
+class anomaly_testing(nn.Module):
+    """AA-YOLO a contrario objectness estimator."""
+    def __init__(self, alpha=1e-3):
+        super().__init__()
+        self.alpha = alpha
+
+    def forward(self, x):
+        _, c, _, _ = x.size()
+        meanx = torch.mean(x, dim=[1, 2, 3], keepdim=True).float()
+        if not hasattr(self, 'lambda_ema'):
+            self.register_buffer('lambda_ema', meanx.mean(0).detach())
+        if self.training:
+            self.lambda_ema *= 0.9
+            self.lambda_ema += 0.1 * meanx.mean(0).detach()
+            lambda_chan = 1 / (meanx + 1e-7)
+            x = lambda_chan * x
+        else:
+            lambda_chan = 1 / (meanx + 1e-7)
+            x = (0.07 * 1 / (self.lambda_ema + 1e-7) + 0.93 * lambda_chan) * x
+
+        x1 = torch.linalg.norm(x.float(), dim=1, ord=1, keepdim=True)
+        x1 = -lnGamma.apply(x1, torch.tensor(c, device=x1.device))
+        # stretched sigmoid with alpha ~= 0.001, mapped to [0,1]
+        x1 = 2 * torch.sigmoid(self.alpha * x1) - 1
+        return x1.clamp_(0.0, 1.0)
