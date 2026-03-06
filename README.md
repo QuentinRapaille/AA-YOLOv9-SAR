@@ -59,6 +59,23 @@ python train.py \
   --name aa_gelan_t_hrsid
 ```
 
+### Baseline YOLOv9-SAR (sans tête AA, HRSID)
+
+```bash
+python train.py \
+  --data data/hrsid.yaml \
+  --cfg models/detect/gelan-t.yaml \
+  --hyp data/hyp.scratch.yolov9_baseline.yaml \
+  --weights '' \
+  --epochs 100 \
+  --batch-size 16 \
+  --img 640 \
+  --device 0 \
+  --workers 4 \
+  --project runs/train \
+  --name baseline_gelan_t_hrsid
+```
+
 ### Smoke test (1 époque)
 
 ```bash
@@ -75,12 +92,41 @@ python train.py \
   --name smoke_aa_gelan_t
 ```
 
+### Smoke test baseline (1 époque)
+
+```bash
+python train.py \
+  --data data/hrsid.yaml \
+  --cfg models/detect/gelan-t.yaml \
+  --hyp data/hyp.scratch.yolov9_baseline.yaml \
+  --weights '' \
+  --epochs 1 \
+  --batch-size 4 \
+  --img 640 \
+  --device 0 \
+  --workers 2 \
+  --name smoke_baseline_gelan_t
+```
+
 ## Validation
 
 ```bash
 python val.py \
   --data data/hrsid.yaml \
   --weights runs/train/aa_gelan_t_hrsid/weights/best.pt \
+  --img 640 \
+  --batch 16 \
+  --conf 0.001 \
+  --iou 0.7 \
+  --device 0
+```
+
+Validation baseline:
+
+```bash
+python val.py \
+  --data data/hrsid.yaml \
+  --weights runs/train/baseline_gelan_t_hrsid/weights/best.pt \
   --img 640 \
   --batch 16 \
   --conf 0.001 \
