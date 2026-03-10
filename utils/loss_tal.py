@@ -194,7 +194,11 @@ class ComputeLoss:
 
         assign_scores = pred_scores.detach().sigmoid()
         if self.use_aa:
-            assign_scores = assign_scores * pred_obj.detach()
+            # Do not gate TAL assignment with AA objectness during training.
+            # Otherwise target_obj depends on fg_mask, while fg_mask already depends
+            # on pred_obj, which can collapse to an all-background fixed point on
+            # empty-heavy SAR datasets such as LS-SSDD.
+            pass
 
         target_labels, target_bboxes, target_scores, fg_mask = self.assigner(
             assign_scores,
